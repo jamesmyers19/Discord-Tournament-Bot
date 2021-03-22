@@ -5,79 +5,56 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from datetime import date
 
+# Create global variables
 load_dotenv()
 TOKEN =os.getenv('DISCORD_TOKEN')
 today = date.today()
 today_fmt = today.strftime("%Y-%m-%d %H:%M:%S")
-
 db = mysql.connector.connect(
     host="localhost",
     user="root",
     password=os.getenv('sqlpassword'),
     database="tourney_bot"
 )
-
 cursor = db.cursor()
-
 bot = commands.Bot(command_prefix='!')
+sql_ins_tourney = 'INSERT INTO tournament (date, num_of_players, num_of_rounds) VALUES (%s, %s, %s,)'
+sql_ins_player_tourney = 'INSERT INTO player_tourney (tourney_date, player_id, name) VALUES (%s, %s, %s)'
 
-@bot.command(name='add_player', help='add a player to the database')
-async def player_add(ctx, player_name):
-    sql = "INSERT INTO player (name) VALUES (%s)"
-    cursor.execute(sql, (str(player_name),))
+# Create player class
+class Player:
+    def __init__(self, sql_id, name, points):
+        self.sql_id = sql_id
+        self.name = name
+        self.points = points
 
-    db.commit()
+class Player_tourney:
+    def __init__(self, date, sql_id, name, points, rounds_played, bye_rounds, win_percent):
+        self.date = date
+        self.sql_id = sql_id
+        self.name = name
+        self.points = points
+        self.rounds_played = rounds_played
+        self.bye_rounds = bye_rounds
+        self.win_percent = win_percent
 
-    await ctx.send('Player added to database!')
+class Tourney:
+    def __init__(self, date, sql_num_of_players, num_of_rounds, first_place, second_place):
+        self.date = date
+        self.sql_num_of_players = sql_num_of_players
+        self.num_of_rounds = num_of_rounds
+        self.first_place = first_place
+        self.second_place = second_place
 
-@bot.command(name='start_tournament', help='begin a new tournament')
-async def tourney_start(ctx, number_of_players, number_of_rounds, *args):
-    sql_sel = "SELECT * FROM player WHERE name = %s"
-
-    sql2 = "INSERT INTO tournament (date, num_of_players, num_of_rounds) VALUES (%s, %s, %s)"
-    val2 = (today_fmt,number_of_players,number_of_rounds,)
-    cursor.execute(sql2, val2)
-    db.commit()
-
-    for player in args:
-        cursor.execute(sql_sel, (player,))
-        player_sql = cursor.fetchall()
-        play_id = player_sql[0][0]
-        play_name = player_sql[0][1]
-        sql1 = "INSERT INTO player_tourney (tourney_date, player_id, name) VALUES (%s, %s, %s)"
-        val1 = (today_fmt, play_id, play_name,)
-        cursor.execute(sql1, val1)
-        db.commit()
-        
-    await ctx.send('Tournament created!')
-
-@bot.command(name='bye_round', help='record bye round for player')
-async def bye(ctx, player_name):
-    sql_sel1 = "SELECT * FROM player WHERE name = %s"
-    cursor.execute(sql_sel1, (player_name,))
-    player = cursor.fetchall()
-    play_id = player[0][0]
-
-    sql_sel2 = 'SELECT * from player_tourney WHERE name = %s and tourney_date = %s'
-    val = (player_name, today_fmt,)
-    cursor.execute(sql_sel2, val)
-    tourney_player = cursor.fetchall()
-    points = tourney_player[0][3]
-    points += 3
-    bye = tourney_player[0][5] 
-    bye += 1
-    rounds = tourney_player[0][4]
-    rounds += 1
-    winpct = ((points / 3) - bye) / rounds
-
+def update_player_tourney(date, play_id, points, bye, rounds, winpct):
     sql_points = "UPDATE player_tourney SET points = %s WHERE player_id = %s and tourney_date = %s"
-    val_points = (points, play_id, today_fmt,)
+    val_points = (points, play_id, date,)
     sql_bye = "UPDATE player_tourney SET bye_rounds = %s WHERE player_id = %s and tourney_date = %s"
-    val_bye = (bye, play_id, today_fmt,)
+    val_bye = (bye, play_id, date,)
     sql_rounds = "UPDATE player_tourney SET rounds_played = %s WHERE player_id = %s and tourney_date = %s"
-    val_rounds = (rounds, play_id, today_fmt,)
+    val_rounds = (rounds, play_id, date,)
     sql_winpct = "UPDATE player_tourney SET win_percent = %s WHERE player_id = %s and tourney_date = %s"
-    val_winpct = (winpct, play_id, today_fmt,)
+    val_winpct = (winpct, play_id, date,)
 
     cursor.execute(sql_points, val_points)
     db.commit()
@@ -88,129 +65,110 @@ async def bye(ctx, player_name):
     cursor.execute(sql_winpct, val_winpct)
     db.commit()
 
+def get_player_info(name):
+    sql_sel_from_player = 'SELECT * FROM player WHERE name = %s'
+    cursor.execute(sql_sel_from_player, (name,))
+    player_info = cursor.fetchall()
+    player = Player(player_info[0][0], player_info[0][1], player_info[0][2])
+    return player
+
+def get_player_tourney_info(name, date):
+    sql_sel_player_tourney = 'SELECT * from player_tourney WHERE name = %s and tourney_date = %s'
+    player_tourney_val = (name, date,)
+    cursor.execute(sql_sel_player_tourney, player_tourney_val)
+    player_tourney_info = cursor.fetchall()
+    player_tourney = Player_tourney(player_tourney_info[0][0], player_tourney_info[0][1], player_tourney_info[0][2], player_tourney_info[0][3], player_tourney_info[0][4], player_tourney_info[0][5], 0.0)
+    return player_tourney
+
+@bot.command(name='add_player', help='add a player to the database')
+async def player_add(ctx, player_name):
+    sql_player_insert = "INSERT INTO player (name) VALUES (%s)"
+    cursor.execute(sql_player_insert, (str(player_name),))
+    db.commit()
+
+    await ctx.send('Player added to database!')
+
+@bot.command(name='start_tournament', help='begin a new tournament')
+async def tourney_start(ctx, number_of_players, number_of_rounds, *args):
+    sql_start_tourney = 'INSERT INTO tournament (date, num_of_players, num_of_rounds) VALUES (%s, %s, %s)'
+    tourney_start_val= (today_fmt,number_of_players,number_of_rounds,)
+    cursor.execute(sql_start_tourney, tourney_start_val)
+    db.commit()
+
+    for player in args:
+        new_player = get_player_info(player)
+        player_tourney_val = (today_fmt, new_player.sql_id, new_player.name,)
+        cursor.execute(sql_ins_player_tourney, player_tourney_val)
+        db.commit()
+        
+    await ctx.send('Tournament created!')
+
+@bot.command(name='bye_round', help='record bye round for player')
+async def bye(ctx, player_name):
+    bye_player = get_player_info(player_name)
+    bye_player_tourney = get_player_tourney_info(bye_player.name, today_fmt)
+    bye_player_tourney.points += 3
+    bye_player_tourney.bye_rounds += 1
+    bye_player_tourney.rounds_played += 1
+    bye_player_tourney.win_percent = ((bye_player_tourney.points / 3) - bye_player_tourney.bye_rounds) / bye_player_tourney.rounds_played
+
+    update_player_tourney(today_fmt, bye_player_tourney.sql_id, bye_player_tourney.points, bye_player_tourney.bye_rounds, bye_player_tourney.rounds_played, bye_player_tourney.win_percent)
+
     await ctx.send('Bye round recorded')  
 
 @bot.command(name='round_results', help='record winner and loser of a round')
 async def round_results(ctx, winner, loser):
-    sql_id = "SELECT * FROM player WHERE name = %s"
-    cursor.execute(sql_id, (winner,))
-    player1 = cursor.fetchall()
-    winner_id = player1[0][0]
-    cursor.execute(sql_id, (loser,))
-    player2 = cursor.fetchall()
-    loser_id = player2[0][0]
+    winner_player = get_player_info(winner)
+    loser_player = get_player_info(loser)
 
-    sql_sel2 = 'SELECT * FROM player_tourney WHERE player_id = %s and tourney_date = %s'
-    val_winner = (winner_id, today_fmt,)
-    val_loser = (loser_id, today_fmt,)
-    cursor.execute(sql_sel2, val_winner)
-    round_winner = cursor.fetchall()
-    winner_points = round_winner[0][3]
-    winner_points += 3
-    winner_rounds = round_winner[0][4]
-    winner_rounds += 1
-    winner_byes = round_winner[0][5]
-    winner_winpct = ((winner_points / 3) - winner_byes) / winner_rounds
+    round_winner = get_player_tourney_info(winner_player.name, today_fmt)
 
-    cursor.execute(sql_sel2, val_loser)
-    round_loser = cursor.fetchall()
-    loser_points = round_loser[0][3]
-    loser_rounds = round_loser[0][4]
-    loser_rounds += 1
-    loser_byes = round_loser[0][5]
-    loser_winpct = ((loser_points / 3) - loser_byes) / loser_rounds
+    round_winner.points += 3
+    round_winner.rounds_played += 1
+    round_winner.win_percent = ((round_winner.points / 3) - round_winner.bye_rounds) / round_winner.rounds_played
     
-    sql_points = "UPDATE player_tourney SET points = %s WHERE player_id = %s and tourney_date = %s"
-    val_points1 = (winner_points, winner_id, today_fmt,)
-    val_points2 = (loser_points, loser_id, today_fmt,)
-    sql_rounds = "UPDATE player_tourney SET rounds_played = %s WHERE player_id = %s and tourney_date = %s"
-    val_rounds1 = (winner_rounds, winner_id, today_fmt,)
-    val_rounds2 = (loser_rounds, loser_id, today_fmt,)
-    sql_winpct = "UPDATE player_tourney SET win_percent = %s WHERE player_id = %s and tourney_date = %s"
-    val_winpct1 = (winner_winpct, winner_id, today_fmt,)
-    val_winpct2 = (loser_winpct, loser_id, today_fmt,)
+    round_loser = get_player_tourney_info(loser_player.name, today_fmt)
+    round_loser.rounds_played += 1
+    round_loser.win_percent = ((round_loser.points / 3) - round_loser.bye_rounds) / round_loser.rounds_played
+    
+    update_player_tourney(today_fmt, round_winner.sql_id, round_winner.points, round_winner.bye_rounds, round_winner.rounds_played, round_winner.win_percent)
+    update_player_tourney(today_fmt, round_loser.sql_id, round_loser.points, round_loser.bye_rounds, round_loser.rounds_played, round_loser.win_percent)
 
-    cursor.execute(sql_points, val_points1)
-    db.commit()
-    cursor.execute(sql_points, val_points2)
-    db.commit()
-    cursor.execute(sql_rounds, val_rounds1)
-    db.commit()
-    cursor.execute(sql_rounds, val_rounds2)
-    db.commit()
-    cursor.execute(sql_winpct, val_winpct1)
-    db.commit()
-    cursor.execute(sql_winpct, val_winpct2)
-    db.commit()
+    await ctx.send('Round recorded')
 
 @bot.command(name='round_results_tie', help="record a tie for each player")
 async def round_results_tie(ctx, player1, player2):
-    sql_id1 = "SELECT * from player WHERE name = %s"
-    cursor.execute(sql_id1, (player1,))
-    sql_player1 = cursor.fetchall()
-    play_id1 = sql_player1[0][0]
+    round_player1 = get_player_info(player1)
+    round_player2 = get_player_info(player2)
+    player_tourney1 = get_player_tourney_info(round_player1.name, today_fmt)
+    player_tourney2 = get_player_tourney_info(round_player2.name, today_fmt)
 
-    sql_id2 = "SELECT * from player WHERE name = %s"
-    cursor.execute(sql_id1, (player2,))
-    sql_player2 = cursor.fetchall()
-    play_id2 = sql_player2[0][0]
+    player_tourney1.points += 1
+    player_tourney1.rounds_played += 1
+    player_tourney1.win_percent = ((player_tourney1.points / 3) - player_tourney1.bye_rounds) / player_tourney1.rounds_played
 
-    sql_sel1 = "SELECT * FROM player_tourney WHERE name = %s and tourney_date = %s"
-    val1 = (player1, today_fmt,)
-    cursor.execute(sql_sel1, val1)
-    tourney_player1 = cursor.fetchall()
-    points1 = tourney_player1[0][3]
-    points1 += 1
-    rounds1 = tourney_player1[0][4]
-    rounds1 += 1
-    byes1 = tourney_player1[0][5]
-    winpct1 = ((points1 / 3) - byes1) / rounds1
+    player_tourney2.points += 1
+    player_tourney2.rounds_played += 1
+    player_tourney2.win_percent = ((player_tourney2.points / 3) - player_tourney2.bye_rounds) / player_tourney2.rounds_played
 
-    sql_sel2 = "SELECT * FROM player_tourney WHERE name = %s and tourney_date = %s"
-    val2 = (player2, today_fmt,)
-    cursor.execute(sql_sel1, val1)
-    tourney_player2 = cursor.fetchall()
-    points2 = tourney_player2[0][3]
-    points2 += 1
-    rounds2 = tourney_player2[0][4]
-    rounds2 += 1
-    byes2 = tourney_player2[0][5]
-    winpct2 = ((points2 / 3) - byes2) / rounds2
+    update_player_tourney(today_fmt, player_tourney1.sql_id, player_tourney1.points, player_tourney1.bye_rounds, player_tourney1.rounds_played, player_tourney1.win_percent)
+    update_player_tourney(today_fmt, player_tourney2.sql_id, player_tourney2.points, player_tourney2.bye_rounds, player_tourney2.rounds_played, player_tourney2.win_percent)
 
-    sql_points = "UPDATE player_tourney SET points = %s WHERE player_id = %s and tourney_date = %s"
-    val_points1 = (points1, play_id1, today_fmt,)
-    val_points2 = (points2, play_id2, today_fmt,)
-    sql_rounds = "UPDATE player_tourney SET rounds_played = %s WHERE player_id = %s and tourney_date = %s"
-    val_rounds1 = (rounds1, play_id1, today_fmt,)
-    val_rounds2 = (rounds2, play_id2, today_fmt,)
-    sql_winpct = "UPDATE player_tourney SET win_percent = %s WHERE player_id = %s and tourney_date = %s"
-    val_winpct1 = (winpct1, play_id1, today_fmt,)
-    val_winpct2 = (winpct2, play_id2, today_fmt,)
-
-    cursor.execute(sql_points, val_points1)
-    db.commit()
-    cursor.execute(sql_points, val_points2)
-    db.commit()
-    cursor.execute(sql_rounds, val_rounds1)
-    db.commit()
-    cursor.execute(sql_rounds, val_rounds2)
-    db.commit()
-    cursor.execute(sql_winpct, val_winpct1)
-    db.commit()
-    cursor.execute(sql_winpct, val_winpct2)
-    db.commit()
+    await ctx.send('Tie recorded')
 
 @bot.command(name='standings', help='display the rankings and points of each player')
 async def standings(ctx):
-    sql = 'SELECT * from player_tourney WHERE tourney_date = %s ORDER BY points DESC'
+    sql = 'SELECT * from player_tourney WHERE tourney_date = %s ORDER BY points DESC, win_percent DESC'
     cursor.execute(sql, (today_fmt,))
     player_standings = cursor.fetchall()
     standings_str = ''
 
     for player in player_standings:
         standings_str += player[2]
-        standings_str += ' '
+        standings_str += ' Points: '
         standings_str += str(player[3])
+        standings_str += ' Win Percent: '
+        standings_str += str(player[6])
         await ctx.send(standings_str)
         standings_str = ''
 
