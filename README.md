@@ -9,12 +9,12 @@ Table Schema:
 
 ### Column     Format
 
-Date       Datetime
+Date       Datetime<br>
 Players    Varchar
 
 ## Player table
 
 ### Column     Format
-firstname      Varchar
-lastname       Varchar
-untapname      Varchar
+firstname      Varchar<br>
+lastname       Varchar<br>
+untapname      Varchar<br>
